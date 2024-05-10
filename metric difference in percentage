@@ -1,0 +1,77 @@
+with fb as(
+select
+	ad_date,
+	'facebook ads' as media_source,
+	spend, 
+	impressions,  
+	clicks , 
+	value,
+	url_parameters
+from facebook_ads_basic_daily fabd
+group by ad_date, media_source, fabd.url_parameters, spend, impressions,  clicks , value),
+google as (
+select
+	ad_date,
+	'google ads' as media_source,
+	spend, 
+	impressions,  
+	clicks, 
+	value,
+	url_parameters
+	from google_ads_basic_daily gabd 
+group by ad_date, media_source, gabd.url_parameters, spend, impressions,clicks , 	value),
+cte1 as (
+select 
+   *
+	from fb
+union
+select 
+   *
+	from google),
+cte2 as (
+select
+	date(date_trunc('month' , ad_date)) as ad_month,
+	sum(spend) as spend_sum, 
+	sum(impressions) as impressions_sum,  
+	sum (clicks) as click_sum, 
+	sum(value) as value_sum,
+	substring(url_parameters, 'utm_campaign=([^&#$]+)') as utm_campaign,
+	lower( substring(url_parameters, 'utm_campaign=([^&#$]+)')),
+	case when lower( substring(url_parameters, 'utm_campaign=([^&#$]+)')) = 'nan' then 'error'
+			  when lower( substring(url_parameters, 'utm_campaign=([^&#$]+)')) is null  then 'no utm param'
+			  else 'ok' end  as check_res,
+	case when sum(clicks) != 0 then  sum(spend)::numeric/sum(clicks) else -1 end as cpc,
+	case when sum(impressions)!=0 then  1000*sum(spend)::numeric/sum(impressions)  else -1 end as cpm,
+	case when sum(impressions)!=0 then sum(clicks)::numeric/sum(impressions)  else -1 end  as ctr,
+	case when sum(spend)!=0 then sum(value)::numeric/sum(spend)  else -1 end as romi
+from cte1 
+group by ad_month, utm_campaign
+order by 1 desc),
+---select *
+---from cte2
+cte3 as(
+select
+  ad_month, 
+  utm_campaign,
+  cpc,
+  cpm,
+  ctr,
+  romi,
+  lag(cpc) over (PARTITION by utm_campaign order by ad_month asc)  as cpc_1m_ago,
+  lag(cpm) over (PARTITION by utm_campaign order by ad_month asc)  as cpm_1m_ago,
+  lag(ctr) over (PARTITION by utm_campaign order by ad_month asc)  as ctr_1m_ago,
+  lag(romi) over (PARTITION by utm_campaign order by ad_month asc)  as romi_1m_ago
+from cte2 )
+SELECT
+ad_month,
+utm_campaign,
+(cpc-cpc_1m_ago)/cpc_1m_ago as cpc_new,
+(cpm-cpm_1m_ago)/cpm_1m_ago  as cpm_new,
+(ctr-ctr_1m_ago)/ctr_1m_ago  as ctr_new,
+(romi-romi_1m_ago)/romi_1m_ago as romi_new,
+coalesce(cpc_1m_ago,0) as cpc, 
+coalesce(cpm_1m_ago,0) as cpm,
+coalesce(ctr_1m_ago,0) as ctr,
+coalesce(romi_1m_ago,0) as romi
+from cte3
+;
